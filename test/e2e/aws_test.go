@@ -22,7 +22,8 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
-	"os"
+
+	"os" // used in watchEvents
 	"os/exec"
 	"path"
 	"path/filepath"
@@ -45,8 +46,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	apimachinerytypes "k8s.io/apimachinery/pkg/types"
 	apirand "k8s.io/apimachinery/pkg/util/rand"
-	"k8s.io/client-go/informers"
-	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/informers"   // used in watchEvents
+	"k8s.io/client-go/tools/cache" // used in watchEvents
 	"k8s.io/client-go/tools/clientcmd"
 	infrav1 "sigs.k8s.io/cluster-api-provider-aws/api/v1alpha3"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
@@ -64,6 +65,7 @@ var (
 	availabilityZones []*string
 	privateCIDRs      = [3]string{"10.0.0.0/24", "10.0.2.0/24", "10.0.4.0/24"}
 	publicCIDRs       = [3]string{"10.0.1.0/24", "10.0.3.0/24", "10.0.5.0/24"}
+	tries             = 0
 )
 
 const (
@@ -106,6 +108,32 @@ type testSetup struct {
 	subnetId                *string
 }
 
+func setup1() testSetup {
+	fmt.Println("********* call to before each - setting up `setup` ")
+	var err error
+	setup := testSetup{}
+	setup.testTmpDir, err = ioutil.TempDir(suiteTmpDir, "aws-test")
+	if err != nil {
+		panic("couldnt make a directory !!!!")
+	}
+	setup.namespace = "test-" + util.RandomString(6)
+	fmt.Println("*********", setup.namespace)
+	createNamespace(setup.namespace, kindClient)
+
+	setup.clusterName = "test-" + util.RandomString(6)
+	setup.awsClusterName = "test-infra-" + util.RandomString(6)
+	setup.cpMachinePrefix = "test-" + util.RandomString(6)
+	setup.cpAWSMachinePrefix = "test-infra-" + util.RandomString(6)
+	setup.cpBootstrapConfigPrefix = "test-boot-" + util.RandomString(6)
+	setup.mdBootstrapConfig = "test-boot-md" + util.RandomString(6)
+	setup.machineDeploymentName = "test-capa-md" + util.RandomString(6)
+	setup.awsMachineTemplateName = "test-infra-capa-mt" + util.RandomString(6)
+	setup.initialReplicas = 2
+	setup.instanceType = "t3.large"
+	setup.multipleAZ = false
+	return setup
+}
+
 var _ = Describe("functional tests", func() {
 	var (
 		setup         testSetup
@@ -114,31 +142,10 @@ var _ = Describe("functional tests", func() {
 	BeforeEach(func() {
 		var ctx context.Context
 		ctx, cancelWatches = context.WithCancel(context.Background())
-
-		var err error
-		setup = testSetup{}
-		setup.testTmpDir, err = ioutil.TempDir(suiteTmpDir, "aws-test")
-		Expect(err).NotTo(HaveOccurred())
-
-		setup.namespace = "test-" + util.RandomString(6)
-		createNamespace(setup.namespace)
-
 		go func() {
 			defer GinkgoRecover()
 			watchEvents(ctx, setup.namespace)
 		}()
-
-		setup.clusterName = "test-" + util.RandomString(6)
-		setup.awsClusterName = "test-infra-" + util.RandomString(6)
-		setup.cpMachinePrefix = "test-" + util.RandomString(6)
-		setup.cpAWSMachinePrefix = "test-infra-" + util.RandomString(6)
-		setup.cpBootstrapConfigPrefix = "test-boot-" + util.RandomString(6)
-		setup.mdBootstrapConfig = "test-boot-md" + util.RandomString(6)
-		setup.machineDeploymentName = "test-capa-md" + util.RandomString(6)
-		setup.awsMachineTemplateName = "test-infra-capa-mt" + util.RandomString(6)
-		setup.initialReplicas = 2
-		setup.instanceType = "t3.large"
-		setup.multipleAZ = false
 	})
 
 	AfterEach(func() {
@@ -147,6 +154,7 @@ var _ = Describe("functional tests", func() {
 
 	Describe("workload cluster lifecycle", func() {
 		It("It should be creatable and deletable", func() {
+			setup := setup1()
 			By("Creating a cluster with single control plane")
 			makeSingleControlPlaneCluster(setup)
 
@@ -180,6 +188,7 @@ var _ = Describe("functional tests", func() {
 	})
 
 	Describe("Provisioning LoadBalancer dynamically and deleting on cluster deletion", func() {
+		setup := setup1()
 		lbServiceName := "test-svc-" + util.RandomString(6)
 		It("It should create and delete Load Balancer", func() {
 			By("Creating a cluster with single control plane")
@@ -219,6 +228,7 @@ var _ = Describe("functional tests", func() {
 		}
 
 		It("It should create volumes and volumes should not be deleted along with cluster infra", func() {
+			setup := setup1()
 			By("Creating a cluster with single control plane")
 			clusterK8sClient := makeSingleControlPlaneCluster(setup)
 
@@ -243,6 +253,7 @@ var _ = Describe("functional tests", func() {
 
 	Describe("MachineDeployment with invalid subnet ID and AZ", func() {
 		It("It should be creatable and deletable", func() {
+			setup := setup1()
 			deployment1 := setup.machineDeploymentName + "-1"
 			deployment2 := setup.machineDeploymentName + "-2"
 			template1 := setup.awsMachineTemplateName + "-1"
@@ -293,17 +304,24 @@ var _ = Describe("functional tests", func() {
 	Describe("multiple workload clusters", func() {
 		Context("in different namespaces", func() {
 			var ns1, clName1, ns2, clName2 string
-			It("should create first cluster", func() {
-				ns1 = setup.namespace
-				clName1 = setup.clusterName
+			var setup11 testSetup
+			var setup22 testSetup
+
+			It("should setup namespaces correctly for the two clusters..."), func() {
+				setup11 = setup1()
+				setup22 = setup1()
+			})
+			It("should create first cluster, then a second cluster, then delete stuff...", func() {
+				ns1 = setup11.namespace
+				clName1 = setup11.clusterName
 				By("Creating first cluster with single control plane")
-				makeSingleControlPlaneCluster(setup)
+				makeSingleControlPlaneCluster(setup11)
 			})
 			It("should create second cluster in a different namespace", func() {
-				ns2 = setup.namespace
-				clName2 = setup.clusterName
+				ns2 = setup22.namespace
+				clName2 = setup22.clusterName
 				By("Creating second cluster with single control plane")
-				makeSingleControlPlaneCluster(setup)
+				makeSingleControlPlaneCluster(setup22)
 			})
 
 			It("should delete both clusters", func() {
@@ -315,29 +333,32 @@ var _ = Describe("functional tests", func() {
 
 		Context("in same namespace", func() {
 			var ns, clName1, clName2 string
+			var setup11 testSetup
+			var setup22 testSetup
 			It("should create first cluster", func() {
-				ns = setup.namespace
-				clName1 = setup.clusterName
+				setup11 = setup1()
+				setup22 = setup1()
 				By("Creating first cluster with single control plane")
-				makeSingleControlPlaneCluster(setup)
+				makeSingleControlPlaneCluster(setup11)
 			})
 			It("should create second cluster in the same namespace", func() {
-				setup.namespace = ns
-				clName2 = setup.clusterName
+				clName2 = setup22.clusterName
+				setup22.namespace = setup11.namespace
 				By("Creating second cluster with single control plane")
-				makeSingleControlPlaneCluster(setup)
+				makeSingleControlPlaneCluster(setup22)
 			})
 
 			It("should delete both clusters", func() {
 				By("Deleting the Clusters")
-				deleteCluster(ns, clName1)
-				deleteCluster(ns, clName2)
+				deleteCluster(setup11.namespace, setup11.clusterName)
+				deleteCluster(setup22.namespace, setup22.clusterName)
 			})
 		})
 	})
 
 	Describe("MachineDeployment will replace a deleted Machine", func() {
 		It("It should reconcile the deleted machine", func() {
+			setup := setup1()
 			By("Creating a workload cluster with single control plane")
 			makeSingleControlPlaneCluster(setup)
 
@@ -345,7 +366,7 @@ var _ = Describe("functional tests", func() {
 			createMachineDeployment(setup)
 
 			By("Deleting a worker node machine")
-			deleteMachine(setup.namespace, setup.machineDeploymentName)
+			deleteMachineFromDeployment(setup.namespace, setup.machineDeploymentName)
 			time.Sleep(10 * time.Second)
 
 			waitForMachineDeploymentRunning(setup.namespace, setup.machineDeploymentName)
@@ -357,6 +378,7 @@ var _ = Describe("functional tests", func() {
 
 	Describe("Workload cluster in multiple AZs", func() {
 		It("It should be creatable and deletable", func() {
+			setup := setup1()
 			By("Creating a workload cluster with single control plane")
 			setup.multipleAZ = true
 			makeSingleControlPlaneCluster(setup)
@@ -404,6 +426,7 @@ var _ = Describe("functional tests", func() {
 
 	Describe("Creating cluster after reaching vpc maximum limit", func() {
 		It("Cluster created after reaching vpc limit should be in provisioning", func() {
+			setup := setup1()
 			By("Create clusters till vpc limit")
 			sess = getSession()
 			limit := getElasticIPsLimit()
@@ -429,6 +452,7 @@ var _ = Describe("functional tests", func() {
 
 	Describe("Delete infra node directly from infra provider", func() {
 		It("Machine referencing deleted infra node should come to failed state", func() {
+			setup := setup1()
 			By("Creating a workload cluster with single control plane")
 			makeSingleControlPlaneCluster(setup)
 
