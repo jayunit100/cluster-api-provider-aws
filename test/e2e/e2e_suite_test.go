@@ -35,7 +35,6 @@ import (
 
 	. "github.com/onsi/ginkgo"
 	"github.com/onsi/ginkgo/config"
-	"github.com/onsi/ginkgo/reporters"
 	. "github.com/onsi/gomega"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 
@@ -67,13 +66,11 @@ import (
 func TestE2e(t *testing.T) {
 	RegisterFailHandler(Fail)
 
-	// If running in prow, output the junit files to the artifacts path
-	junitPath := fmt.Sprintf("junit.e2e_suite.%d.xml", config.GinkgoConfig.ParallelNode)
-	artifactPath, exists := os.LookupEnv("ARTIFACTS")
-	if exists {
-		junitPath = path.Join(artifactPath, junitPath)
+	// If running in prow, make sure to output the junit files to the artifacts path
+	if ap, exists := os.LookupEnv("ARTIFACTS"); exists {
+		artifactPath = ap
 	}
-	junitReporter := reporters.NewJUnitReporter(junitPath)
+	junitPath := path.Join(artifactPath, fmt.Sprintf("junit.e2e_suite.%d.xml", config.GinkgoConfig.ParallelNode))
 	RunSpecsWithDefaultAndCustomReporters(t, "e2e Suite", []Reporter{junitReporter})
 }
 
@@ -106,11 +103,11 @@ var (
 	accessKey    *iam.AccessKey
 	suiteTmpDir  string
 	region       string
-	artifactPath string
+	artifactPath = ".artifacts"
 	logPath      string
 )
 
-var _ = BeforeSuite(func() {
+var _ = SynchronizedBeforeSuite(func() {
 	artifactPath, _ = os.LookupEnv("ARTIFACTS")
 	logPath = path.Join(artifactPath, "logs")
 	Expect(os.MkdirAll(filepath.Dir(logPath), 0755)).To(Succeed())
@@ -191,7 +188,7 @@ var _ = BeforeSuite(func() {
 
 }, setupTimeout)
 
-var _ = AfterSuite(func() {
+var _ = SynchronizedAfterSuite(func() {
 	fmt.Fprintf(GinkgoWriter, "Tearing down kind cluster\n")
 
 	if kindCluster.Name != "" {

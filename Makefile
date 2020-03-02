@@ -44,6 +44,7 @@ MOCKGEN := $(TOOLS_BIN_DIR)/mockgen
 CONVERSION_GEN := $(TOOLS_BIN_DIR)/conversion-gen
 RELEASE_NOTES_BIN := bin/release-notes
 RELEASE_NOTES := $(TOOLS_DIR)/$(RELEASE_NOTES_BIN)
+GINKGO := $(abspath $(TOOLS_BIN_DIR)/ginkgo)
 
 # Define Docker related variables. Releases should modify and double check these vars.
 REGISTRY ?= gcr.io/$(shell gcloud config get-value project)
@@ -91,7 +92,7 @@ test-integration: ## Run integration tests
 .PHONY: test-e2e
 test-e2e: ## Run e2e tests
 	PULL_POLICY=IfNotPresent $(MAKE) docker-build
-	cd $(TEST_E2E_DIR); go test -v -tags=e2e -timeout=4h . -args -ginkgo.v -ginkgo.focus "functional tests" --managerImage $(CONTROLLER_IMG)-$(ARCH):$(TAG)
+	cd $(TEST_E2E_DIR); $(GINKGO) -nodes=4 -v -tags=e2e -focus="functional tests" ./... -- -managerImage=$(CONTROLLER_IMG)-$(ARCH):$(TAG)
 
 .PHONY: test-conformance
 test-conformance: ## Run conformance test on workload cluster
@@ -101,6 +102,8 @@ test-conformance: ## Run conformance test on workload cluster
 ## --------------------------------------
 ## Binaries
 ## --------------------------------------
+$(GINKGO): $(TOOLS_DIR)/go.mod
+	cd $(TOOLS_DIR) && go build -tags=tools -o $(BIN_DIR)/ginkgo github.com/onsi/ginkgo/ginkgo
 
 .PHONY: binaries
 binaries: manager clusterawsadm ## Builds and installs all binaries
